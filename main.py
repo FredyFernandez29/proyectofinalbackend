@@ -28,10 +28,10 @@ def verify_token(func):
     def wrapper(*args, **kwargs):
         auth_header = request.headers.get("Authorization")
         if not auth_header:
-            return jsonify({"message": "Token no proporcionado"}), 401
+            return jsonify({"message": "Token not provided"}), 401
         parts = auth_header.split()
         if len(parts) != 2 or parts[0].lower() != "bearer":
-            return jsonify({"message": "Formato de token inválido"}), 401
+            return jsonify({"message": "Invalid token format"}), 401
         token = parts[1]
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
@@ -39,9 +39,9 @@ def verify_token(func):
             request.rol = payload.get("rol")
             request.correo = payload.get("correo")
         except jwt.ExpiredSignatureError:
-            return jsonify({"message": "Token expirado"}), 403
+            return jsonify({"message": "Token expired"}), 403
         except jwt.InvalidTokenError:
-            return jsonify({"message": "Token inválido"}), 403
+            return jsonify({"message": "Invalid token"}), 403
         return func(*args, **kwargs)
     return wrapper
 
@@ -58,7 +58,6 @@ def listar_usuarios():
         return jsonify({"error": str(e)}), 500
 
 @app.route("/usuarios", methods=["POST"])
-@verify_token
 def crear_usuario():
     try:
         datos = request.get_json()
@@ -73,17 +72,6 @@ def crear_usuario():
             "rol": datos.get("rol", "cliente")
         }).execute()
         return jsonify(response.data), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/usuarios/<int:usuario_id>", methods=["DELETE"])
-@verify_token
-def eliminar_usuario(usuario_id):
-    if request.rol != "admin":
-        return jsonify({"message": "Solo administradores pueden eliminar usuarios"}), 403
-    try:
-        supabase.table("usuarios").delete().eq("id", usuario_id).execute()
-        return jsonify({"message": "Usuario eliminado"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -143,8 +131,30 @@ def listar_tickets():
             query = query.eq("creado_por", user_id)
         elif rol == "tecnico":
             query = query.eq("asignado_a", user_id)
-        response = query.order("created_at", desc=True).execute()
+        response = query.execute()
         return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/tickets/<int:ticket_id>", methods=["GET"])
+@verify_token
+def obtener_ticket(ticket_id):
+    try:
+        response = supabase.table("tickets").select("*, creado_por(*), asignado_a(*)").eq("id", ticket_id).execute()
+        if not response.data:
+            return jsonify({"message": "Ticket no encontrado"}), 404
+        ticket = response.data[0]
+        # Verificar permisos para ver detalles
+        rol = request.rol
+        user_id = request.user_id
+        if rol == "cliente" and ticket["creado_por"]["id"] != user_id:
+            return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
+        if rol == "tecnico" and ticket["asignado_a"] and ticket["asignado_a"]["id"] != user_id:
+            return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
+        # Obtener comentarios
+        comentarios_resp = supabase.table("comentarios").select("*, usuario(*)").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
+        ticket["comentarios"] = comentarios_resp.data
+        return jsonify(ticket), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -172,7 +182,6 @@ def actualizar_ticket(ticket_id):
         datos = request.get_json()
         rol = request.rol
         user_id = request.user_id
-
         ticket_resp = supabase.table("tickets").select("*").eq("id", ticket_id).execute()
         if not ticket_resp.data:
             return jsonify({"message": "Ticket no encontrado"}), 404
@@ -209,15 +218,6 @@ def eliminar_ticket(ticket_id):
 # ==========================
 # Comentarios
 # ==========================
-@app.route("/tickets/<int:ticket_id>/comentarios", methods=["GET"])
-@verify_token
-def listar_comentarios(ticket_id):
-    try:
-        response = supabase.table("comentarios").select("*, usuario_id(*)").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
-        return jsonify(response.data), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 @app.route("/tickets/<int:ticket_id>/comentarios", methods=["POST"])
 @verify_token
 def agregar_comentario(ticket_id):
@@ -226,45 +226,13 @@ def agregar_comentario(ticket_id):
         contenido = datos.get("contenido")
         if not contenido:
             return jsonify({"message": "El comentario no puede estar vacío"}), 400
-
-        # Verificar que el ticket existe y que el usuario tiene acceso
-        ticket_resp = supabase.table("tickets").select("*").eq("id", ticket_id).execute()
-        if not ticket_resp.data:
-            return jsonify({"message": "Ticket no encontrado"}), 404
-        ticket = ticket_resp.data[0]
-        rol = request.rol
-        user_id = request.user_id
-        if rol == "cliente" and ticket["creado_por"] != user_id:
-            return jsonify({"message": "No tienes permiso para comentar en este ticket"}), 403
-        # Técnico solo puede comentar si está asignado
-        if rol == "tecnico" and ticket["asignado_a"] != user_id:
-            return jsonify({"message": "No tienes permiso para comentar en este ticket"}), 403
-        # Admin puede comentar en todos
-
         nuevo = {
             "ticket_id": ticket_id,
-            "usuario_id": user_id,
+            "usuario_id": request.user_id,
             "contenido": contenido
         }
         response = supabase.table("comentarios").insert(nuevo).execute()
         return jsonify(response.data), 201
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/comentarios/<int:comentario_id>", methods=["DELETE"])
-@verify_token
-def eliminar_comentario(comentario_id):
-    try:
-        # Solo el autor o admin pueden eliminar
-        comentario_resp = supabase.table("comentarios").select("usuario_id").eq("id", comentario_id).execute()
-        if not comentario_resp.data:
-            return jsonify({"message": "Comentario no encontrado"}), 404
-        autor_id = comentario_resp.data[0]["usuario_id"]
-        if request.rol != "admin" and request.user_id != autor_id:
-            return jsonify({"message": "No tienes permiso para eliminar este comentario"}), 403
-
-        supabase.table("comentarios").delete().eq("id", comentario_id).execute()
-        return jsonify({"message": "Comentario eliminado"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
