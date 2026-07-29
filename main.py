@@ -126,13 +126,24 @@ def listar_tickets():
     try:
         rol = request.rol
         user_id = request.user_id
-        query = supabase.table("tickets").select("*, creado_por(*), asignado_a(*)")
+        query = supabase.table("tickets").select("*")
         if rol == "cliente":
             query = query.eq("creado_por", user_id)
         elif rol == "tecnico":
             query = query.eq("asignado_a", user_id)
+        # admin ve todos, no filtramos
         response = query.execute()
-        return jsonify(response.data), 200
+        tickets = response.data
+        # Enriquecer con nombres de usuarios
+        for t in tickets:
+            creador = supabase.table("usuarios").select("id, nombre, apellido").eq("id", t["creado_por"]).execute()
+            t["creado_por"] = creador.data[0] if creador.data else None
+            if t["asignado_a"]:
+                asignado = supabase.table("usuarios").select("id, nombre, apellido").eq("id", t["asignado_a"]).execute()
+                t["asignado_a"] = asignado.data[0] if asignado.data else None
+            else:
+                t["asignado_a"] = None
+        return jsonify(tickets), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -140,20 +151,40 @@ def listar_tickets():
 @verify_token
 def obtener_ticket(ticket_id):
     try:
-        response = supabase.table("tickets").select("*, creado_por(*), asignado_a(*)").eq("id", ticket_id).execute()
+        # Obtener ticket
+        response = supabase.table("tickets").select("*").eq("id", ticket_id).execute()
         if not response.data:
             return jsonify({"message": "Ticket no encontrado"}), 404
         ticket = response.data[0]
-        # Verificar permisos para ver detalles
+
+        # Verificar permisos
         rol = request.rol
         user_id = request.user_id
-        if rol == "cliente" and ticket["creado_por"]["id"] != user_id:
+        if rol == "cliente" and ticket["creado_por"] != user_id:
             return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
-        if rol == "tecnico" and ticket["asignado_a"] and ticket["asignado_a"]["id"] != user_id:
+        if rol == "tecnico" and ticket["asignado_a"] != user_id:
             return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
+
+        # Obtener datos del creador
+        creador = supabase.table("usuarios").select("id, nombre, apellido, correo").eq("id", ticket["creado_por"]).execute()
+        ticket["creado_por"] = creador.data[0] if creador.data else None
+
+        # Obtener datos del asignado
+        if ticket["asignado_a"]:
+            asignado = supabase.table("usuarios").select("id, nombre, apellido, correo").eq("id", ticket["asignado_a"]).execute()
+            ticket["asignado_a"] = asignado.data[0] if asignado.data else None
+        else:
+            ticket["asignado_a"] = None
+
         # Obtener comentarios
-        comentarios_resp = supabase.table("comentarios").select("*, usuario(*)").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
-        ticket["comentarios"] = comentarios_resp.data
+        comentarios_resp = supabase.table("comentarios").select("*").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
+        comentarios = []
+        for c in comentarios_resp.data:
+            usuario = supabase.table("usuarios").select("id, nombre, apellido").eq("id", c["usuario_id"]).execute()
+            c["usuario"] = usuario.data[0] if usuario.data else None
+            comentarios.append(c)
+        ticket["comentarios"] = comentarios
+
         return jsonify(ticket), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -232,7 +263,11 @@ def agregar_comentario(ticket_id):
             "contenido": contenido
         }
         response = supabase.table("comentarios").insert(nuevo).execute()
-        return jsonify(response.data), 201
+        # Devolver el comentario con el usuario
+        comentario = response.data[0]
+        usuario = supabase.table("usuarios").select("id, nombre, apellido").eq("id", comentario["usuario_id"]).execute()
+        comentario["usuario"] = usuario.data[0] if usuario.data else None
+        return jsonify(comentario), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
