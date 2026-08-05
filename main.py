@@ -1,9 +1,5 @@
 import os
 import jwt
-import secrets
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime, timedelta
 from functools import wraps
 from flask import Flask, request, jsonify
@@ -20,13 +16,6 @@ CORS(app)
 SECRET_KEY = os.getenv("SECRET_KEY", "secret")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# Configuración de correo
-EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
-EMAIL_USER = os.getenv("EMAIL_USER")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
-EMAIL_FROM = os.getenv("EMAIL_FROM", EMAIL_USER)
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -124,106 +113,6 @@ def login():
                 "rol": usuario["rol"]
             }
         }), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# ==========================
-# Recuperación de Contraseña
-# ==========================
-def enviar_correo(destinatario, asunto, cuerpo_html):
-    """Envía un correo electrónico usando SMTP."""
-    if not EMAIL_USER or not EMAIL_PASSWORD:
-        print("=== SIMULACIÓN DE CORREO ===")
-        print(f"Para: {destinatario}")
-        print(f"Asunto: {asunto}")
-        print(f"Cuerpo: {cuerpo_html}")
-        print("=== FIN DE SIMULACIÓN ===")
-        return True
-    
-    try:
-        msg = MIMEMultipart('alternative')
-        msg['Subject'] = asunto
-        msg['From'] = EMAIL_FROM
-        msg['To'] = destinatario
-        
-        part = MIMEText(cuerpo_html, 'html')
-        msg.attach(part)
-        
-        server = smtplib.SMTP(EMAIL_HOST, EMAIL_PORT)
-        server.starttls()
-        server.login(EMAIL_USER, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_FROM, destinatario, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Error enviando correo: {e}")
-        return False
-
-@app.route("/recuperar-contrasena", methods=["POST"])
-def solicitar_recuperacion():
-    try:
-        datos = request.get_json()
-        correo = datos.get("correo")
-        if not correo:
-            return jsonify({"message": "Correo requerido"}), 400
-        
-        user_resp = supabase.table("usuarios").select("id, nombre").eq("correo", correo).limit(1).execute()
-        if not user_resp.data:
-            return jsonify({"message": "Si el correo existe, recibirás un enlace de recuperación"}), 200
-        
-        usuario = user_resp.data[0]
-        token = secrets.token_urlsafe(32)
-        expiracion = datetime.utcnow() + timedelta(minutes=15)
-        
-        supabase.table("password_reset_tokens").insert({
-            "usuario_id": usuario["id"],
-            "token": token,
-            "expiracion": expiracion.isoformat(),
-            "usado": False
-        }).execute()
-        
-        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
-        reset_link = f"{frontend_url}/reset-password?token={token}"
-        
-        asunto = "Recuperación de contraseña - Ticket System"
-        cuerpo_html = f"""
-        <h2>Hola {usuario['nombre']}</h2>
-        <p>Haz clic en el siguiente enlace para restablecer tu contraseña:</p>
-        <a href="{reset_link}">{reset_link}</a>
-        <p>Este enlace expirará en 15 minutos.</p>
-        <p>Si no solicitaste esto, ignora este mensaje.</p>
-        """
-        
-        enviar_correo(correo, asunto, cuerpo_html)
-        return jsonify({"message": "Si el correo existe, recibirás un enlace de recuperación"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route("/reset-password", methods=["POST"])
-def resetear_contrasena():
-    try:
-        datos = request.get_json()
-        token = datos.get("token")
-        nueva_clave = datos.get("nueva_clave")
-        
-        if not token or not nueva_clave:
-            return jsonify({"message": "Token y nueva contraseña requeridos"}), 400
-        
-        token_resp = supabase.table("password_reset_tokens").select("*, usuarios(*)").eq("token", token).eq("usado", False).execute()
-        if not token_resp.data:
-            return jsonify({"message": "Token inválido o ya utilizado"}), 400
-        
-        token_data = token_resp.data[0]
-        expiracion = datetime.fromisoformat(token_data["expiracion"])
-        if datetime.utcnow() > expiracion:
-            return jsonify({"message": "El token ha expirado"}), 400
-        
-        usuario_id = token_data["usuario_id"]
-        nuevo_hash = generate_password_hash(nueva_clave)
-        supabase.table("usuarios").update({"clave": nuevo_hash}).eq("id", usuario_id).execute()
-        supabase.table("password_reset_tokens").update({"usado": True}).eq("id", token_data["id"]).execute()
-        
-        return jsonify({"message": "Contraseña actualizada correctamente"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
