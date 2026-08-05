@@ -130,6 +130,7 @@ def listar_tickets():
             query = query.eq("creado_por", user_id)
         elif rol == "tecnico":
             query = query.eq("asignado_a", user_id)
+        # admin ve todos, sin filtro
         response = query.execute()
         return jsonify(response.data), 200
     except Exception as e:
@@ -175,12 +176,17 @@ def obtener_ticket(ticket_id):
 def crear_ticket():
     try:
         datos = request.get_json()
+        # Manejar asignado_a vacío
+        asignado = datos.get("asignado_a")
+        if asignado == "":
+            asignado = None
+
         nuevo = {
             "titulo": datos["titulo"],
             "descripcion": datos.get("descripcion", ""),
             "prioridad": datos.get("prioridad", "media"),
             "creado_por": request.user_id,
-            "asignado_a": datos.get("asignado_a")
+            "asignado_a": asignado
         }
         response = supabase.table("tickets").insert(nuevo).execute()
         return jsonify(response.data), 201
@@ -210,6 +216,9 @@ def actualizar_ticket(ticket_id):
 
         campos_permitidos = ["titulo", "descripcion", "estado", "prioridad", "asignado_a"]
         update_data = {k: v for k, v in datos.items() if k in campos_permitidos}
+        # Manejar asignado_a vacío en actualización
+        if "asignado_a" in update_data and update_data["asignado_a"] == "":
+            update_data["asignado_a"] = None
         update_data["updated_at"] = datetime.utcnow().isoformat()
         response = supabase.table("tickets").update(update_data).eq("id", ticket_id).execute()
         return jsonify(response.data), 200
