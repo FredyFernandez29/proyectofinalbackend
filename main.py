@@ -145,12 +145,9 @@ def obtener_ticket(ticket_id):
             return jsonify({"message": "Ticket no encontrado"}), 404
         ticket = response.data[0]
 
-        # --- Manejo de nulos en relaciones ---
         creador = ticket.get("creado_por")
         if not creador:
-            # Si por alguna razón no tiene creador, denegar acceso
             return jsonify({"message": "Ticket sin creador"}), 400
-        # Si creador es un dict, obtener su id; si es un número, usarlo directamente
         creador_id = creador.get("id") if isinstance(creador, dict) else creador
 
         asignado = ticket.get("asignado_a")
@@ -161,14 +158,13 @@ def obtener_ticket(ticket_id):
         rol = request.rol
         user_id = request.user_id
 
-        # Permisos
         if rol == "cliente" and creador_id != user_id:
             return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
         if rol == "tecnico" and asignado_id and asignado_id != user_id:
             return jsonify({"message": "No tienes permiso para ver este ticket"}), 403
 
-        # Obtener comentarios
-        comentarios_resp = supabase.table("comentarios").select("*, usuario(*)").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
+        # CORRECCIÓN AQUÍ: Cambiar "usuario(*)" por "usuarios(*)"
+        comentarios_resp = supabase.table("comentarios").select("*, usuarios(*)").eq("ticket_id", ticket_id).order("created_at", desc=False).execute()
         ticket["comentarios"] = comentarios_resp.data if comentarios_resp.data else []
 
         return jsonify(ticket), 200
