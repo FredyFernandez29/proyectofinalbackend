@@ -21,7 +21,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "secret")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# Configuración de correo (opcional, usa variables de entorno)
+# Configuración de correo
 EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.getenv("EMAIL_PORT", 587))
 EMAIL_USER = os.getenv("EMAIL_USER")
@@ -131,9 +131,9 @@ def login():
 # Recuperación de Contraseña
 # ==========================
 def enviar_correo(destinatario, asunto, cuerpo_html):
-    """Envía un correo electrónico usando SMTP (opcional)"""
+    """Envía un correo electrónico usando SMTP."""
     if not EMAIL_USER or not EMAIL_PASSWORD:
-        print(f"=== SIMULACIÓN DE CORREO ===")
+        print("=== SIMULACIÓN DE CORREO ===")
         print(f"Para: {destinatario}")
         print(f"Asunto: {asunto}")
         print(f"Cuerpo: {cuerpo_html}")
@@ -167,19 +167,14 @@ def solicitar_recuperacion():
         if not correo:
             return jsonify({"message": "Correo requerido"}), 400
         
-        # Verificar que el usuario existe
         user_resp = supabase.table("usuarios").select("id, nombre").eq("correo", correo).limit(1).execute()
         if not user_resp.data:
-            # Por seguridad, no revelar si el correo existe o no
             return jsonify({"message": "Si el correo existe, recibirás un enlace de recuperación"}), 200
         
         usuario = user_resp.data[0]
-        
-        # Generar token aleatorio
         token = secrets.token_urlsafe(32)
         expiracion = datetime.utcnow() + timedelta(minutes=15)
         
-        # Guardar token en la base de datos
         supabase.table("password_reset_tokens").insert({
             "usuario_id": usuario["id"],
             "token": token,
@@ -187,11 +182,9 @@ def solicitar_recuperacion():
             "usado": False
         }).execute()
         
-        # Construir enlace de recuperación
         frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
         reset_link = f"{frontend_url}/reset-password?token={token}"
         
-        # Enviar correo
         asunto = "Recuperación de contraseña - Ticket System"
         cuerpo_html = f"""
         <h2>Hola {usuario['nombre']}</h2>
@@ -199,10 +192,9 @@ def solicitar_recuperacion():
         <a href="{reset_link}">{reset_link}</a>
         <p>Este enlace expirará en 15 minutos.</p>
         <p>Si no solicitaste esto, ignora este mensaje.</p>
-        
+        """
         
         enviar_correo(correo, asunto, cuerpo_html)
-        
         return jsonify({"message": "Si el correo existe, recibirás un enlace de recuperación"}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -217,7 +209,6 @@ def resetear_contrasena():
         if not token or not nueva_clave:
             return jsonify({"message": "Token y nueva contraseña requeridos"}), 400
         
-        # Buscar token válido
         token_resp = supabase.table("password_reset_tokens").select("*, usuarios(*)").eq("token", token).eq("usado", False).execute()
         if not token_resp.data:
             return jsonify({"message": "Token inválido o ya utilizado"}), 400
@@ -228,12 +219,8 @@ def resetear_contrasena():
             return jsonify({"message": "El token ha expirado"}), 400
         
         usuario_id = token_data["usuario_id"]
-        
-        # Actualizar contraseña
         nuevo_hash = generate_password_hash(nueva_clave)
         supabase.table("usuarios").update({"clave": nuevo_hash}).eq("id", usuario_id).execute()
-        
-        # Marcar token como usado
         supabase.table("password_reset_tokens").update({"usado": True}).eq("id", token_data["id"]).execute()
         
         return jsonify({"message": "Contraseña actualizada correctamente"}), 200
