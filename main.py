@@ -118,7 +118,7 @@ def login():
         return jsonify({"error": str(e)}), 500
 
 # ==========================
-# Tickets (con etiquetas)
+# Tickets
 # ==========================
 @app.route("/tickets", methods=["GET"])
 @verify_token
@@ -181,8 +181,7 @@ def crear_ticket():
             "descripcion": datos.get("descripcion", ""),
             "prioridad": datos.get("prioridad", "media"),
             "creado_por": request.user_id,
-            "asignado_a": datos.get("asignado_a"),
-            "etiquetas": datos.get("etiquetas")  # nuevo campo
+            "asignado_a": datos.get("asignado_a")
         }
         response = supabase.table("tickets").insert(nuevo).execute()
         return jsonify(response.data), 201
@@ -210,7 +209,7 @@ def actualizar_ticket(ticket_id):
         else:
             return jsonify({"message": "No tienes permiso para actualizar este ticket"}), 403
 
-        campos_permitidos = ["titulo", "descripcion", "estado", "prioridad", "asignado_a", "etiquetas"]
+        campos_permitidos = ["titulo", "descripcion", "estado", "prioridad", "asignado_a"]
         update_data = {k: v for k, v in datos.items() if k in campos_permitidos}
         update_data["updated_at"] = datetime.utcnow().isoformat()
         response = supabase.table("tickets").update(update_data).eq("id", ticket_id).execute()
@@ -230,7 +229,7 @@ def eliminar_ticket(ticket_id):
         return jsonify({"error": str(e)}), 500
 
 # ==========================
-# Comentarios (con adjunto)
+# Comentarios
 # ==========================
 @app.route("/tickets/<int:ticket_id>/comentarios", methods=["POST"])
 @verify_token
@@ -238,14 +237,12 @@ def agregar_comentario(ticket_id):
     try:
         datos = request.get_json()
         contenido = datos.get("contenido")
-        adjunto = datos.get("adjunto")  # puede ser base64 o URL
-        if not contenido and not adjunto:
-            return jsonify({"message": "El comentario o adjunto es requerido"}), 400
+        if not contenido:
+            return jsonify({"message": "El comentario no puede estar vacío"}), 400
         nuevo = {
             "ticket_id": ticket_id,
             "usuario_id": request.user_id,
-            "contenido": contenido or "",
-            "adjunto": adjunto
+            "contenido": contenido
         }
         response = supabase.table("comentarios").insert(nuevo).execute()
         return jsonify(response.data), 201
